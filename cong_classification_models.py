@@ -1,4 +1,5 @@
 import pandas as pd
+import joblib
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -18,171 +19,149 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
+from sklearn.ensemble import GradientBoostingClassifier
 
 from xgboost import XGBClassifier
 
-df_congestion = pd.read_csv("agg_cong_packets.csv")
+# load aggregated dataset
+df = pd.read_csv("aggregated_dataset_1.csv")
 
-df_no_congestion = pd.read_csv("agg_non_cong_packets.csv")
+# columns not useful for congestion prediction
+drop_cols = [
+    "source_file",
+    "time_window",
+    "window_index",
+    "traffic_browsing",
+    "traffic_email_chat",
+    "traffic_streaming",
+    "traffic_file_transfer",
+    "traffic_voice_video_call"
+]
 
-# combine both into one dataset
-df = pd.concat([df_congestion, df_no_congestion], ignore_index=True)
-
-# drop raw time so the model does not just learn capture timing
-df = df.drop(columns=["time_window"], errors="ignore")
+# keep a full version for later analysis
+df_full = df.copy()
 
 # target column
-label_col = "label"
+label_col = "congestion_label"
 
-# X = input features, y = labels
-X = df.drop(columns=[label_col])
-y = df[label_col]
+# full version (with everything)
+X_full = df_full.drop(columns=[label_col])
+y_full = df_full[label_col]
 
-# split into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
+# model version (drop leakage + traffic labels)
+X_model = X_full.drop(columns=drop_cols, errors="ignore")
+
+print("Features used for training:")
+print(X_model.columns.tolist())
+
+# split both versions together so rows stay aligned
+X_train, X_test, y_train, y_test, X_full_train, X_full_test = train_test_split(
+    X_model,
+    y_full,
+    X_full,
     test_size=0.2,
     random_state=42,
-    stratify=y
+    stratify=y_full
 )
 
-# define models to compare
+# save model-ready splits
+X_train.to_csv("X_1_train.csv", index=False)
+X_test.to_csv("X_1_test.csv", index=False)
+y_train.to_csv("y_1_train.csv", index=False)
+y_test.to_csv("y_1_test.csv", index=False)
+
+# save full test data with context (traffic types, source_file, etc.)
+X_full_test.to_csv("test_1_full_context.csv", index=False)
+
+print("Saved train/test splits and full context test set")
+
+# define models
 models = {
+
     "Logistic Regression": Pipeline([
-        # fill missing numeric values
         ("imputer", SimpleImputer(strategy="median")),
-
-        # scale features because logistic regression works better when features are on similar scales
         ("scaler", StandardScaler()),
-
-        # simple baseline linear classifier
-        ("model", LogisticRegression(
-            max_iter=1000,   # allows more iterations so training converges
-            C=1.0,           # inverse regularization strength
-            solver="lbfgs",
-            random_state=42
-        ))
+        ("model", LogisticRegression(max_iter=1000, random_state=42))
     ]),
 
     "Decision Tree": Pipeline([
-        # fill missing numeric values
         ("imputer", SimpleImputer(strategy="median")),
-
-        # single tree model that is easy to interpret
         ("model", DecisionTreeClassifier(
-            max_depth=8,          # limits how deep the tree can grow
-            min_samples_split=5,  # minimum samples needed before splitting
-            min_samples_leaf=2,   # minimum samples allowed in a leaf
-            criterion="gini",
+            max_depth=8,
+            min_samples_split=5,
+            min_samples_leaf=2,
             random_state=42
         ))
     ]),
 
     "Random Forest": Pipeline([
-        # fill missing numeric values
         ("imputer", SimpleImputer(strategy="median")),
-
-        # ensemble of decision trees, usually strong for tabular data
         ("model", RandomForestClassifier(
-            n_estimators=200,      # number of trees
-            max_depth=10,          # limits tree depth
-            min_samples_split=5,   # minimum samples needed before splitting
-            min_samples_leaf=2,    # minimum samples allowed in a leaf
-            max_features="sqrt",   # number of features considered per split
-            bootstrap=True,
+            n_estimators=200,
+            max_depth=10,
             random_state=42,
             n_jobs=-1
         ))
     ]),
 
     "Extra Trees": Pipeline([
-        # fill missing numeric values
         ("imputer", SimpleImputer(strategy="median")),
-
-        # similar to random forest but uses more random split choices
         ("model", ExtraTreesClassifier(
             n_estimators=200,
             max_depth=10,
-            min_samples_split=5,
-            min_samples_leaf=2,
-            max_features="sqrt",
             random_state=42,
             n_jobs=-1
         ))
     ]),
 
     "KNN": Pipeline([
-        # fill missing numeric values
         ("imputer", SimpleImputer(strategy="median")),
-
-        # scale features because KNN is based on distance
         ("scaler", StandardScaler()),
-
-        # nearest-neighbor classifier
-        ("model", KNeighborsClassifier(
-            n_neighbors=5,      # number of neighbors used for voting
-            weights="distance", # closer neighbors matter more
-            metric="minkowski",
-            p=2                 # p=2 is Euclidean distance
-        ))
+        ("model", KNeighborsClassifier(n_neighbors=5))
     ]),
 
     "SVM": Pipeline([
-        # fill missing numeric values
         ("imputer", SimpleImputer(strategy="median")),
-
-        # scale features because SVM is very sensitive to scale
         ("scaler", StandardScaler()),
+        ("model", SVC(kernel="rbf", probability=True, random_state=42))
+    ]),
 
-        # nonlinear classifier using an RBF kernel
-        ("model", SVC(
-            kernel="rbf",
-            C=1.0,          # regularization strength
-            gamma="scale",  # controls how local the decision boundary is
-            probability=True,
-            random_state=42
-        ))
+    "Gradient Boosting": Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", GradientBoostingClassifier(random_state=42))
     ]),
 
     "XGBoost": Pipeline([
-        # fill missing numeric values
         ("imputer", SimpleImputer(strategy="median")),
-
-        # boosted tree model, often one of the best for structured data
         ("model", XGBClassifier(
-            n_estimators=200,        # number of boosting trees
-            max_depth=6,             # tree depth
-            learning_rate=0.1,       # step size for each boosting round
-            subsample=0.8,           # fraction of rows used per tree
-            colsample_bytree=0.8,    # fraction of features used per tree
-            min_child_weight=1,      # minimum weight needed in a child node
-            reg_lambda=1.0,          # L2 regularization
+            n_estimators=200,
+            max_depth=6,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
             eval_metric="logloss",
             random_state=42
         ))
     ])
 }
 
-# store results for comparison
 results = []
+best_model = None
+best_f1 = -1
+best_model_name = ""
 
-# train and evaluate each model
+# train and evaluate models
 for name, pipeline in models.items():
-    print(f"\n--- {name} ---")
+    print(f"\n{name}")
 
-    # fit model on training data
     pipeline.fit(X_train, y_train)
-
-    # predict on test data
     y_pred = pipeline.predict(X_test)
 
-    # calculate evaluation metrics
     acc = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred, zero_division=0)
     recall = recall_score(y_test, y_pred, zero_division=0)
     f1 = f1_score(y_test, y_pred, zero_division=0)
 
-    # save metrics for later comparison
     results.append({
         "Model": name,
         "Accuracy": acc,
@@ -191,11 +170,17 @@ for name, pipeline in models.items():
         "F1": f1
     })
 
-    # print detailed results
+    # track best model
+    if f1 > best_f1:
+        best_f1 = f1
+        best_model = pipeline
+        best_model_name = name
+
     print("Accuracy:", acc)
     print("Precision:", precision)
     print("Recall:", recall)
     print("F1:", f1)
+
     print("\nClassification Report:")
     print(classification_report(
         y_test,
@@ -203,167 +188,92 @@ for name, pipeline in models.items():
         target_names=["No Congestion", "Congestion"],
         zero_division=0
     ))
+
     print("Confusion Matrix:")
     print(confusion_matrix(y_test, y_pred))
 
-# compare all models by F1
+# compare models
 results_df = pd.DataFrame(results).sort_values("F1", ascending=False)
+results_df.to_csv("model_comparison_congestion_1.csv", index=False)
 
-print("\n=== Model Comparison ===")
-print(results_df)
+print("\nModel comparison saved")
 
-# save comparison results
-results_df.to_csv("model_comparison_congestion.csv", index=False)
-print("\nSaved model comparison to model_comparison_congestion.csv")
+# save best model
+joblib.dump(best_model, "best_congestion_model_1.pkl")
 
-# output:
-# --- Logistic Regression ---
-# Accuracy: 0.689119170984456
-# Precision: 0.7323943661971831
-# Recall: 0.5591397849462365
-# F1: 0.6341463414634146
+print(f"\nBest model: {best_model_name}")
+print(f"Best F1 score: {best_f1}")
+print("Saved best model to best_congestion_model.pkl")
 
-# Classification Report:
-#                precision    recall  f1-score   support
+# window size 1
 
-# No Congestion       0.66      0.81      0.73       100
-#    Congestion       0.73      0.56      0.63        93
+# Features used for training:
+# ['total_packets', 'total_bytes', 'mean_packet_size', 'max_packet_size', 'std_packet_size', 'active_flows', 'retransmissions', 'duplicate_acks', 'lost_segments', 'mean_rtt', 'max_rtt', 'std_rtt', 'mean_bytes_in_flight', 'max_bytes_in_flight', 'mean_window_size', 'tcp_packet_count', 'udp_packet_count', 'packets_per_sec', 'bytes_per_sec', 'tcp_ratio', 'udp_ratio', 'avg_bytes_per_flow', 'avg_packets_per_flow']
+# Saved train/test splits and full context test set
 
-#      accuracy                           0.69       193
-#     macro avg       0.70      0.68      0.68       193
-#  weighted avg       0.70      0.69      0.68       193
+# Logistic Regression
+# Accuracy: 0.7393364928909952
+# Precision: 0.7247706422018348
+# Recall: 0.7596153846153846
+# F1: 0.7417840375586855
 
-# Confusion Matrix:
-# [[81 19]
-#  [41 52]]
+# Decision Tree
+# Accuracy: 0.8199052132701422
+# Precision: 0.8113207547169812
+# Recall: 0.8269230769230769
+# F1: 0.819047619047619
 
-# --- Decision Tree ---
-# Accuracy: 0.7823834196891192
-# Precision: 0.7684210526315789
-# Recall: 0.7849462365591398
-# F1: 0.776595744680851
+# Extra Trees
+# Accuracy: 0.8436018957345972
+# Precision: 0.865979381443299
+# Recall: 0.8076923076923077
+# F1: 0.835820895522388
 
-# Classification Report:
-#                precision    recall  f1-score   support
+# KNN
+# Accuracy: 0.7725118483412322
+# Precision: 0.7857142857142857
+# Recall: 0.7403846153846154
+# F1: 0.7623762376237624
 
-# No Congestion       0.80      0.78      0.79       100
-#    Congestion       0.77      0.78      0.78        93
+# SVM
+# Accuracy: 0.7677725118483413
+# Precision: 0.8160919540229885
+# Recall: 0.6826923076923077
+# F1: 0.743455497382199
 
-#      accuracy                           0.78       193
-#     macro avg       0.78      0.78      0.78       193
-#  weighted avg       0.78      0.78      0.78       193
+# Gradient Boosting
+# Accuracy: 0.8672985781990521
+# Precision: 0.8454545454545455
+# Recall: 0.8942307692307693
+# F1: 0.8691588785046729
 
-# Confusion Matrix:
-# [[78 22]
-#  [20 73]]
+# XGBoost
+# Accuracy: 0.8957345971563981
+# Precision: 0.8727272727272727
+# Recall: 0.9230769230769231
+# F1: 0.897196261682243
 
-# --- Random Forest ---
-# Accuracy: 0.8082901554404145
-# Precision: 0.8181818181818182
-# Recall: 0.7741935483870968
-# F1: 0.7955801104972375
 
-# Classification Report:
-#                precision    recall  f1-score   support
 
-# No Congestion       0.80      0.84      0.82       100
-#    Congestion       0.82      0.77      0.80        93
+# Best model: Random Forest
+# Best F1 score: 0.9004739336492891
 
-#      accuracy                           0.81       193
-#     macro avg       0.81      0.81      0.81       193
-#  weighted avg       0.81      0.81      0.81       193
-
-# Confusion Matrix:
-# [[84 16]
-#  [21 72]]
-
-# --- Extra Trees ---
-# Accuracy: 0.7564766839378239
-# Precision: 0.7875
-# Recall: 0.6774193548387096
-# F1: 0.7283236994219653
+# Random Forest
+# Accuracy: 0.9004739336492891
+# Precision: 0.8878504672897196
+# Recall: 0.9134615384615384
+# F1: 0.9004739336492891
 
 # Classification Report:
 #                precision    recall  f1-score   support
 
-# No Congestion       0.73      0.83      0.78       100
-#    Congestion       0.79      0.68      0.73        93
+# No Congestion       0.91      0.89      0.90       107
+#    Congestion       0.89      0.91      0.90       104
 
-#      accuracy                           0.76       193
-#     macro avg       0.76      0.75      0.75       193
-#  weighted avg       0.76      0.76      0.75       193
-
-# Confusion Matrix:
-# [[83 17]
-#  [30 63]]
-
-# --- KNN ---
-# Accuracy: 0.7409326424870466
-# Precision: 0.7047619047619048
-# Recall: 0.7956989247311828
-# F1: 0.7474747474747475
-
-# Classification Report:
-#                precision    recall  f1-score   support
-
-# No Congestion       0.78      0.69      0.73       100
-#    Congestion       0.70      0.80      0.75        93
-
-#      accuracy                           0.74       193
-#     macro avg       0.74      0.74      0.74       193
-#  weighted avg       0.75      0.74      0.74       193
+#      accuracy                           0.90       211
+#     macro avg       0.90      0.90      0.90       211
+#  weighted avg       0.90      0.90      0.90       211
 
 # Confusion Matrix:
-# [[69 31]
-#  [19 74]]
-
-# --- SVM ---
-# Accuracy: 0.6787564766839378
-# Precision: 0.7246376811594203
-# Recall: 0.5376344086021505
-# F1: 0.6172839506172839
-
-# Classification Report:
-#                precision    recall  f1-score   support
-
-# No Congestion       0.65      0.81      0.72       100
-#    Congestion       0.72      0.54      0.62        93
-
-#      accuracy                           0.68       193
-#     macro avg       0.69      0.67      0.67       193
-#  weighted avg       0.69      0.68      0.67       193
-
-# Confusion Matrix:
-# [[81 19]
-#  [43 50]]
-
-# --- XGBoost ---
-# Accuracy: 0.7979274611398963
-# Precision: 0.8068181818181818
-# Recall: 0.7634408602150538
-# F1: 0.7845303867403315
-
-# Classification Report:
-#                precision    recall  f1-score   support
-
-# No Congestion       0.79      0.83      0.81       100
-#    Congestion       0.81      0.76      0.78        93
-
-#      accuracy                           0.80       193
-#     macro avg       0.80      0.80      0.80       193
-#  weighted avg       0.80      0.80      0.80       193
-
-# Confusion Matrix:
-# [[83 17]
-#  [22 71]]
-
-# === Model Comparison ===
-#                  Model  Accuracy  Precision    Recall        F1
-# 2        Random Forest  0.808290   0.818182  0.774194  0.795580
-# 6              XGBoost  0.797927   0.806818  0.763441  0.784530
-# 1        Decision Tree  0.782383   0.768421  0.784946  0.776596
-# 4                  KNN  0.740933   0.704762  0.795699  0.747475
-# 3          Extra Trees  0.756477   0.787500  0.677419  0.728324
-# 0  Logistic Regression  0.689119   0.732394  0.559140  0.634146
-# 5                  SVM  0.678756   0.724638  0.537634  0.617284
-
+# [[95 12]
+#  [ 9 95]]
