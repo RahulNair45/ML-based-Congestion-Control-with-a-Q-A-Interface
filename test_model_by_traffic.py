@@ -4,11 +4,11 @@ import joblib
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 # load model and test data
-model = joblib.load("best_congestion_model_1.pkl")
+model = joblib.load("best_congestion_model_5.pkl")
 
-X_test = pd.read_csv("X_1_test.csv")
-y_test = pd.read_csv("y_1_test.csv").values.ravel()
-context = pd.read_csv("test_1_full_context.csv")
+X_test = pd.read_csv("X_5_test.csv")
+y_test = pd.read_csv("y_5_test.csv").values.ravel()
+context = pd.read_csv("test_5_full_context.csv")
 
 # generate predictions
 y_pred = model.predict(X_test)
@@ -71,6 +71,51 @@ for col in traffic_cols:
 
 # save results
 results_df = pd.DataFrame(results).sort_values("F1", ascending=False)
-results_df.to_csv("traffic_type_performance.csv", index=False)
+results_df.to_csv("traffic_type_5_performance.csv", index=False)
 
 print("\nSaved traffic type performance to traffic_type_performance.csv")
+
+# results for window size 1:
+
+# Overall Performance:
+# Accuracy: 0.9004739336492891
+# Precision: 0.8878504672897196
+# Recall: 0.9134615384615384
+# F1: 0.9004739336492891
+
+# ===== Performance by Traffic Type =====
+
+# traffic_browsing
+# Samples: 115
+# Accuracy: 0.9217391304347826
+# Precision: 0.890625
+# Recall: 0.9661016949152542
+# F1: 0.926829268292683
+
+# traffic_email_chat
+# Samples: 83
+# Accuracy: 0.9518072289156626
+# Precision: 0.9230769230769231
+# Recall: 0.972972972972973
+# F1: 0.9473684210526315
+
+# traffic_streaming
+# Samples: 71
+# Accuracy: 0.9859154929577465
+# Precision: 0.9736842105263158
+# Recall: 1.0
+# F1: 0.9866666666666667
+
+# traffic_file_transfer
+# Samples: 40
+# Accuracy: 1.0
+# Precision: 1.0
+# Recall: 1.0
+# F1: 1.0
+
+# traffic_voice_video_call
+# Samples: 65
+# Accuracy: 0.8461538461538461
+# Precision: 0.8823529411764706
+# Recall: 0.8333333333333334
+# F1: 0.8571428571428571

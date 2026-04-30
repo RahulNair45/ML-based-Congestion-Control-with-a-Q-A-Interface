@@ -24,7 +24,7 @@ from sklearn.ensemble import GradientBoostingClassifier
 from xgboost import XGBClassifier
 
 # load aggregated dataset
-df = pd.read_csv("aggregated_dataset_1.csv")
+df = pd.read_csv("aggregated_dataset_5.csv")
 
 # columns not useful for congestion prediction
 drop_cols = [
@@ -59,19 +59,19 @@ X_train, X_test, y_train, y_test, X_full_train, X_full_test = train_test_split(
     X_model,
     y_full,
     X_full,
-    test_size=0.2,
+    test_size=0.30,
     random_state=42,
     stratify=y_full
 )
 
 # save model-ready splits
-X_train.to_csv("X_1_train.csv", index=False)
-X_test.to_csv("X_1_test.csv", index=False)
-y_train.to_csv("y_1_train.csv", index=False)
-y_test.to_csv("y_1_test.csv", index=False)
+X_train.to_csv("X_5_30_train.csv", index=False)
+X_test.to_csv("X_5_30_test.csv", index=False)
+y_train.to_csv("y_5_30_train.csv", index=False)
+y_test.to_csv("y_5_30_test.csv", index=False)
 
 # save full test data with context (traffic types, source_file, etc.)
-X_full_test.to_csv("test_1_full_context.csv", index=False)
+X_full_test.to_csv("test_5_30_full_context.csv", index=False)
 
 print("Saved train/test splits and full context test set")
 
@@ -194,12 +194,12 @@ for name, pipeline in models.items():
 
 # compare models
 results_df = pd.DataFrame(results).sort_values("F1", ascending=False)
-results_df.to_csv("model_comparison_congestion_1.csv", index=False)
+results_df.to_csv("model_comparison_congestion_5_30.csv", index=False)
 
 print("\nModel comparison saved")
 
 # save best model
-joblib.dump(best_model, "best_congestion_model_1.pkl")
+joblib.dump(best_model, "best_congestion_model_5_30.pkl")
 
 print(f"\nBest model: {best_model_name}")
 print(f"Best F1 score: {best_f1}")
@@ -277,3 +277,10 @@ print("Saved best model to best_congestion_model.pkl")
 # Confusion Matrix:
 # [[95 12]
 #  [ 9 95]]
+
+
+# window size 5
+
+# Best model: Extra Trees
+# Best F1 score: 0.9767441860465116
+
