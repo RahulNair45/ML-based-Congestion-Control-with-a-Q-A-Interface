@@ -1,13 +1,39 @@
 import pandas as pd
 import numpy as np
 
-input_file = "combined_dataset.csv"
-output_file = "aggregated_dataset_5.csv"
-packet_output_file = "packet_with_windows_5.csv"
+# input_file = "combined_dataset.csv"
+# output_file = "aggregated_dataset_5.csv"
+# packet_output_file = "packet_with_windows_5.csv"
+
+input_file = "pLoss_clean_loss_labels.csv"
+output_file = "pLoss_aggregated_5.csv"
+packet_output_file = "pLoss_packet_windows_5.csv"
 
 WINDOW_SIZE = 5   # size of time window in seconds 
 
 df = pd.read_csv(input_file)
+
+# add source file name if this is a single cleaned capture instead of combined data
+if "source_file" not in df.columns:
+    df["source_file"] = input_file
+
+# add packet loss label for older files that do not have this column
+# older congested captures are treated as 5% loss, non-congested as 0%
+if "packet_loss_level" not in df.columns:
+    df["packet_loss_level"] = np.where(df["congestion_label"] == 1, 0.05, 0.0)
+
+# add missing traffic columns as 0 so the aggregation does not crash
+traffic_cols = [
+    "traffic_browsing",
+    "traffic_email_chat",
+    "traffic_streaming",
+    "traffic_file_transfer",
+    "traffic_voice_video_call"
+]
+
+for col in traffic_cols:
+    if col not in df.columns:
+        df[col] = 0
 
 # Convert important columns to numeric
 num_cols = [
@@ -22,12 +48,28 @@ num_cols = [
     "tcp.analysis.bytes_in_flight",
     "tcp.analysis.ack_rtt",
     "is_tcp",
-    "is_udp"
+    "is_udp",
+    "congestion_label",
+    "packet_loss_level",
+    "traffic_browsing",
+    "traffic_email_chat",
+    "traffic_streaming",
+    "traffic_file_transfer",
+    "traffic_voice_video_call"
 ]
 
 for col in num_cols:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+
+# fill missing packet loss values as no packet loss
+df["packet_loss_level"] = df["packet_loss_level"].fillna(0.0)
+
+# fill missing label values safely
+df["congestion_label"] = df["congestion_label"].fillna(0)
+
+for col in traffic_cols:
+    df[col] = df[col].fillna(0)
 
 # drop invalid rows
 df = df.dropna(subset=["relative_time_sec", "frame.len"])
@@ -74,13 +116,16 @@ features = df.groupby(["source_file", "time_window"]).agg(
     # TCP behavior 
     mean_window_size=("tcp.window_size_value", "mean"),  # avg TCP receive window size
 
-    #  protocol mix 
+    # protocol mix 
     tcp_packet_count=("is_tcp", "sum"),           # number of TCP packets
     udp_packet_count=("is_udp", "sum"),           # number of UDP packets
 
     # labels 
     # congestion: majority vote across packets in window
     congestion_label=("congestion_label", lambda x: int(x.mean() >= 0.5)),
+
+    # packet loss: use highest packet loss level present in the window
+    packet_loss_level=("packet_loss_level", "max"),
 
     # traffic types: if ANY packet has it → mark as present
     traffic_browsing=("traffic_browsing", "max"),
@@ -119,10 +164,13 @@ for col in fill_zero_cols:
 features["avg_bytes_per_flow"] = features["avg_bytes_per_flow"].fillna(0)
 features["avg_packets_per_flow"] = features["avg_packets_per_flow"].fillna(0)
 
+# keep packet loss label clean
+features["packet_loss_level"] = features["packet_loss_level"].fillna(0.0)
 
 # Move labels to the end
 label_cols = [
     "congestion_label",
+    "packet_loss_level",
     "traffic_browsing",
     "traffic_email_chat",
     "traffic_streaming",
@@ -137,6 +185,12 @@ features.to_csv(output_file, index=False)
 
 print("\nSaved packet-level windows to:", packet_output_file)
 print("Saved aggregated dataset to:", output_file)
+
+print("\nPacket loss level distribution:")
+print(features["packet_loss_level"].value_counts().sort_index())
+
+print("\nCongestion label distribution:")
+print(features["congestion_label"].value_counts())
 
 print("\nSample output:")
 print(features.head())
